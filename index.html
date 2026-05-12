@@ -1,39 +1,161 @@
-﻿This conversation was generated with Duck.ai (https://duck.ai) using OpenAI's GPT-5 mini Model. AI chats may display inaccurate or offensive information (see https://duckduckgo.com/duckai/privacy-terms for more info).
-
-====================
-
-User prompt 1 of 5 - 12/5/2026, 12.46.51:
-Hi
-
-GPT-5 mini:
-Hello — how can I help you today?
-
---------------------
-
-User prompt 2 of 5 - 12/5/2026, 12.47.09:
-Bantu saya buat web solana sender
-
-GPT-5 mini:
-Baik — saya buatkan panduan singkat dan kode contoh untuk membuat web Solana sender (halaman web yang mengirim token SOL atau SPL) menggunakan JavaScript, web3.js, dan wallet adapter (Phantom). Panduan ini asumsikan Anda ingin: mengirim SOL dan token SPL dari antarmuka web ke alamat tujuan, menggunakan Phantom wallet untuk tanda tangan.
-
-Ringkasan langkah:
-1. Siapkan proyek frontend (Vite/React atau HTML+JS sederhana).  
-2. Pasang dependensi: @solana/web3.js dan @solana/wallet-adapter (opsional: wallet-adapter untuk React).  
-3. Hubungkan ke Phantom wallet.  
-4. Buat fungsi untuk mengirim SOL.  
-5. (Opsional) Buat fungsi untuk mengirim token SPL (menggunakan @solana/spl-token).  
-6. Tangani error dan tampilkan status transaksi.
-
-Contoh sederhana (vanilla HTML + JS, tanpa bundler)
-
-Buat file index.html:
-```html
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Solana Sender</title>
-  </head>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Solana Sender (Manual Keypair) — Mainnet</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;max-width:900px;margin:32px auto;padding:0 16px;}
+    textarea,input{font-family:monospace;font-size:14px}
+    label{display:block;margin-top:12px}
+    button{margin-top:12px}
+    pre{background:#f6f6f6;padding:12px;border-radius:6px;white-space:pre-wrap}
+    .warn{color:darkred;font-weight:700}
+  </style>
+</head>
+<body>
+  <h1>Solana Sender — Mainnet</h1>
+
+  <p class="warn">PERINGATAN: Jangan masukkan private key utama di browser publik. Jalankan hanya di lingkungan lokal yang aman.</p>
+
+  <label>Private key (JSON array 64 bytes atau base58 64/32 bytes)</label>
+  <textarea id="priv" rows="4" cols="80" placeholder='e.g. [12,34,...] or base58 string'></textarea>
+
+  <label>Sender public key (auto)</label>
+  <input id="senderPub" size="60" readonly placeholder="Parsed after entering private key"/>
+
+  <label>Recipient</label>
+  <input id="recipient" size="60" value="C94EM19Vgp5j4J9KTJxagLnJjihGhV5J3U1R1K6mHbTc"/>
+
+  <label>Amount (SOL)</label>
+  <input id="amount" placeholder="0.01"/>
+
+  <div>
+    <button id="send">Send SOL</button>
+    <button id="refreshBal">Refresh balance</button>
+  </div>
+
+  <div id="balance">Balance: -</div>
+
+  <pre id="out"></pre>
+
+  <script type="module">
+    import { Connection, PublicKey, clusterApiUrl, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair } from "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.76.0/+esm";
+    import bs58 from "https://cdn.jsdelivr.net/npm/bs58@5.0.0/+esm";
+
+    const out = document.getElementById('out');
+    const senderPubInput = document.getElementById('senderPub');
+    const recipientInput = document.getElementById('recipient');
+    const balanceDiv = document.getElementById('balance');
+    const conn = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+
+    let currentKeypair = null;
+    let balanceInterval = null;
+
+    function log(...args){ out.textContent += args.join(' ') + '\n'; window.scrollTo(0,document.body.scrollHeight); }
+    function clearLog(){ out.textContent = ''; }
+
+    function parseKey(input){
+      input = input.trim();
+      if (!input) throw new Error('Empty private key');
+      try{
+        const parsed = JSON.parse(input);
+        if (Array.isArray(parsed) && parsed.length===64) return Keypair.fromSecretKey(Uint8Array.from(parsed));
+      }catch(e){}
+      try{
+        const bytes = bs58.decode(input);
+        if (bytes.length===64) return Keypair.fromSecretKey(bytes);
+        if (bytes.length===32) return Keypair.fromSeed(bytes);
+      }catch(e){}
+      throw new Error('Unsupported private key format. Provide JSON array (64) or base58 (64 or 32).');
+    }
+
+    async function updateBalance(){
+      try{
+        if (!currentKeypair) { balanceDiv.textContent = 'Balance: - (no key)'; return; }
+        balanceDiv.textContent = 'Balance: loading...';
+        const lamports = await conn.getBalance(currentKeypair.publicKey, 'confirmed');
+        balanceDiv.textContent = 'Balance: ' + (lamports / LAMPORTS_PER_SOL) + ' SOL (' + lamports + ' lamports)';
+      }catch(err){
+        balanceDiv.textContent = 'Balance: error';
+        log('Balance error:', err.message || String(err));
+      }
+    }
+
+    document.getElementById('priv').addEventListener('input', () => {
+      const val = document.getElementById('priv').value.trim();
+      if (!val) {
+        currentKeypair = null;
+        senderPubInput.value = '';
+        updateBalance();
+        if (balanceInterval) { clearInterval(balanceInterval); balanceInterval = null; }
+        return;
+      }
+      try{
+        currentKeypair = parseKey(val);
+        senderPubInput.value = currentKeypair.publicKey.toBase58();
+        updateBalance();
+        if (!balanceInterval){
+          balanceInterval = setInterval(updateBalance, 10000);
+        }
+      }catch(e){
+        senderPubInput.value = 'Invalid key';
+        currentKeypair = null;
+        balanceDiv.textContent = 'Balance: -';
+        if (balanceInterval) { clearInterval(balanceInterval); balanceInterval = null; }
+      }
+    });
+
+    document.getElementById('refreshBal').onclick = updateBalance;
+
+    document.getElementById('send').onclick = async () => {
+      clearLog();
+      try{
+        if (!currentKeypair) throw new Error('Private key required and valid');
+        const recipient = recipientInput.value.trim();
+        const amount = parseFloat(document.getElementById('amount').value);
+        if (!recipient) throw new Error('Recipient required');
+        if (isNaN(amount) || amount <= 0) throw new Error('Invalid amount');
+
+        log('Sender:', currentKeypair.publicKey.toBase58());
+        log('Recipient:', recipient);
+        log('Amount:', amount, 'SOL');
+
+        const toPub = new PublicKey(recipient);
+
+        log('Building transaction...');
+        const tx = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: currentKeypair.publicKey,
+            toPubkey: toPub,
+            lamports: Math.round(amount * LAMPORTS_PER_SOL),
+          })
+        );
+
+        tx.feePayer = currentKeypair.publicKey;
+        const { blockhash } = await conn.getLatestBlockhash('confirmed');
+        tx.recentBlockhash = blockhash;
+
+        log('Signing transaction...');
+        tx.sign(currentKeypair);
+
+        log('Serializing and sending...');
+        const raw = tx.serialize();
+        const txid = await conn.sendRawTransaction(raw);
+        log('Submitted txid:', txid);
+
+        log('Waiting confirmation...');
+        await conn.confirmTransaction(txid, 'confirmed');
+        log('Transaction confirmed:', txid);
+
+        await updateBalance();
+      }catch(err){
+        log('Error:', err.message || String(err));
+      }
+    };
+  </script>
+</body>
+</html>
   <body>
     <h1>Solana Sender</h1>
     <button id="connectBtn">Connect Phantom</button>
